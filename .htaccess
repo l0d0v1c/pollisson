@@ -2,6 +2,11 @@ RewriteEngine On
 
 # Protection de la base de données SQLite
 <Files "*.db">
+    Require all denied
+</Files>
+
+# Fallback pour Apache < 2.4
+<Files "*.db">
     Order Allow,Deny
     Deny from all
 </Files>
@@ -14,9 +19,15 @@ RewriteRule ^([a-zA-Z0-9_-]+)/?$ index.php?code=$1 [QSA,L]
 
 # Protection des fichiers sensibles
 <FilesMatch "\.(log|sql|bak|backup|old)$">
+    Require all denied
+</FilesMatch>
+
+# Fallback pour Apache < 2.4
+<FilesMatch "\.(log|sql|bak|backup|old)$">
     Order Allow,Deny
     Deny from all
 </FilesMatch>
+
 
 # Headers de sécurité
 Header always set X-Content-Type-Options nosniff

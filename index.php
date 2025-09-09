@@ -1,7 +1,16 @@
 <?php
-session_start();
+// Configuration des sessions pour Apache
+if (session_status() == PHP_SESSION_NONE) {
+    session_start();
+}
+
+// Configuration pour la production
 error_reporting(E_ALL);
-ini_set('display_errors', 1);
+ini_set('display_errors', 0);
+ini_set('log_errors', 1);
+
+// Configuration pour SQLite sur serveur
+ini_set('sqlite3.defensive', 0);
 
 // Charger la configuration
 $config = file_exists('config.php') ? require('config.php') : require('config.ref.php');
@@ -17,8 +26,30 @@ class PollSystem {
     
     private function initDatabase() {
         $dbPath = $this->config['database']['path'] ?? 'polls.db';
+        
+        // S'assurer que le chemin est absolu (compatible PHP < 8)
+        if (substr($dbPath, 0, 1) !== '/') {
+            $dbPath = __DIR__ . '/' . $dbPath;
+        }
+        
+        // Créer le répertoire si nécessaire
+        $dbDir = dirname($dbPath);
+        if (!is_dir($dbDir)) {
+            mkdir($dbDir, 0755, true);
+        }
+        
+        // Vérifier les permissions avant de créer la base
+        if (!is_writable($dbDir)) {
+            throw new Exception("Le répertoire de la base de données n'est pas accessible en écriture: $dbDir");
+        }
+        
         $this->db = new PDO('sqlite:' . $dbPath);
         $this->db->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+        
+        // Définir les permissions sur le fichier de base de données
+        if (file_exists($dbPath)) {
+            chmod($dbPath, 0644);
+        }
         
         $this->db->exec("CREATE TABLE IF NOT EXISTS polls (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -53,6 +84,11 @@ class PollSystem {
     
     public function getConfig() {
         return $this->config;
+    }
+    
+    public function getPollUrl($pollCode) {
+        // Génère l'URL publique courte du sondage
+        return htmlspecialchars($pollCode);
     }
     
     public function generateUniqueCode() {
@@ -144,16 +180,43 @@ class PollSystem {
     }
     
     public function submitVote($poll_code, $selected_options, $other_comment = '') {
-        $ip = $_SERVER['REMOTE_ADDR'];
-        
-        $stmt = $this->db->prepare("SELECT COUNT(*) FROM votes WHERE poll_code = ? AND ip_address = ?");
-        $stmt->execute([$poll_code, $ip]);
-        if ($stmt->fetchColumn() > 0) {
+        try {
+            // Obtenir l'adresse IP réelle même derrière un proxy
+            $ip = $this->getRealIpAddr();
+            
+            // Vérifier si cette IP a déjà voté
+            $stmt = $this->db->prepare("SELECT COUNT(*) FROM votes WHERE poll_code = ? AND ip_address = ?");
+            $stmt->execute([$poll_code, $ip]);
+            if ($stmt->fetchColumn() > 0) {
+                return false;
+            }
+            
+            // Vérifier que le sondage existe
+            if (!$this->getPoll($poll_code)) {
+                return false;
+            }
+            
+            // Insérer le vote
+            $stmt = $this->db->prepare("INSERT INTO votes (poll_code, selected_options, other_comment, ip_address) VALUES (?, ?, ?, ?)");
+            $result = $stmt->execute([$poll_code, json_encode($selected_options), $other_comment, $ip]);
+            
+            return $result;
+            
+        } catch (Exception $e) {
+            error_log("Erreur lors du vote: " . $e->getMessage());
             return false;
         }
-        
-        $stmt = $this->db->prepare("INSERT INTO votes (poll_code, selected_options, other_comment, ip_address) VALUES (?, ?, ?, ?)");
-        return $stmt->execute([$poll_code, json_encode($selected_options), $other_comment, $ip]);
+    }
+    
+    private function getRealIpAddr() {
+        if (!empty($_SERVER['HTTP_CLIENT_IP'])) {
+            $ip = $_SERVER['HTTP_CLIENT_IP'];
+        } elseif (!empty($_SERVER['HTTP_X_FORWARDED_FOR'])) {
+            $ip = $_SERVER['HTTP_X_FORWARDED_FOR'];
+        } else {
+            $ip = $_SERVER['REMOTE_ADDR'];
+        }
+        return $ip;
     }
     
     public function getResults($poll_code) {
@@ -174,8 +237,19 @@ class PollSystem {
             $selected = json_decode($vote['selected_options'], true);
             if (is_array($selected)) {
                 foreach ($selected as $option) {
-                    if (isset($results[$option])) {
-                        $results[$option]++;
+                    // Nettoyer l'option du vote pour la comparaison
+                    $cleanOption = trim(str_replace("\r", "", $option));
+                    
+                    if (isset($results[$cleanOption])) {
+                        $results[$cleanOption]++;
+                    } else {
+                        // Si pas de correspondance exacte, chercher par similarité
+                        foreach (array_keys($results) as $availableOption) {
+                            if (trim($availableOption) === $cleanOption) {
+                                $results[$availableOption]++;
+                                break;
+                            }
+                        }
                     }
                 }
             }
@@ -284,7 +358,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             exit;
         }
         
-        $options = array_filter(explode("\n", $_POST['options']));
+        // Nettoyer les options en supprimant les retours à la ligne
+        $options = array_filter(array_map('trim', explode("\n", str_replace("\r", "", $_POST['options']))));
         $poll_data = [
             'code' => $newCode,
             'header_html' => !empty($_POST['header_html']) ? $_POST['header_html'] : $config['default_header'],
@@ -313,7 +388,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             exit;
         }
         
-        $options = array_filter(explode("\n", $_POST['options']));
+        // Nettoyer les options en supprimant les retours à la ligne
+        $options = array_filter(array_map('trim', explode("\n", str_replace("\r", "", $_POST['options']))));
         $poll_data = [
             'code' => $poll_code,
             'header_html' => !empty($_POST['header_html']) ? $_POST['header_html'] : $config['default_header'],
@@ -335,13 +411,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if (!is_array($selected_options)) {
             $selected_options = !empty($selected_options) ? [$selected_options] : [];
         }
+        
+        // Nettoyer les options sélectionnées (supprimer \r\n)
+        $selected_options = array_map(function($option) {
+            return trim(str_replace("\r", "", $option));
+        }, $selected_options);
         $other_comment = $_POST['other_comment'] ?? '';
         
-        if ($pollSystem->submitVote($poll_code, $selected_options, $other_comment)) {
+        // Valider que des options ont été sélectionnées
+        if (empty($selected_options) && empty($other_comment)) {
+            header("Location: ?code=$poll_code&error=no_selection");
+            exit;
+        }
+        
+        $voteResult = $pollSystem->submitVote($poll_code, $selected_options, $other_comment);
+        
+        if ($voteResult) {
             header("Location: ?code=$poll_code&voted=1");
             exit;
         } else {
-            // L'utilisateur a déjà voté
+            // L'utilisateur a déjà voté ou erreur
             header("Location: ?code=$poll_code&already_voted=1");
             exit;
         }
@@ -497,7 +586,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             <h3><?= htmlspecialchars($poll['code']) ?></h3>
                             <p>Créé le: <?= $poll['created_at'] ?></p>
                             <div style="display: flex; flex-wrap: wrap; gap: 10px;">
-                                <a href="?code=<?= $poll['code'] ?>" class="btn">Voir le sondage</a>
+                                <a href="<?= $pollSystem->getPollUrl($poll['code']) ?>" class="btn" target="_blank">Voir le sondage</a>
                                 <a href="?action=results&code=<?= $poll['code'] ?>" class="btn">Résultats</a>
                                 <a href="?action=export&code=<?= $poll['code'] ?>" class="btn">Exporter MD</a>
                                 <a href="?action=admin&edit=<?= $poll['code'] ?>" class="btn btn-primary">Modifier</a>
