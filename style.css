@@ -564,3 +564,89 @@ input[type="checkbox"] {
 ::-webkit-scrollbar-thumb:hover {
     background: var(--primary-hover);
 }
+/* Bloc signature du vote */
+.signature-block {
+    margin-top: 30px;
+    padding: 24px;
+    border: 2px dashed var(--primary-color, #3498db);
+    border-radius: 10px;
+    background: rgba(52, 152, 219, 0.04);
+}
+
+.signature-title {
+    margin: 0 0 6px;
+    color: var(--primary-color, #3498db);
+}
+
+.signature-intro {
+    margin: 0 0 18px;
+    color: #666;
+    font-size: 0.95em;
+}
+
+.signer-fields {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 14px;
+    margin-bottom: 18px;
+}
+
+.signer-field {
+    display: flex;
+    flex-direction: column;
+}
+
+.signer-field label {
+    font-size: 0.85em;
+    font-weight: 600;
+    color: #444;
+    margin-bottom: 4px;
+}
+
+.signer-field input {
+    padding: 10px 12px;
+    border: 1px solid #ccc;
+    border-radius: 6px;
+    font-size: 1em;
+}
+
+.signer-field input:focus {
+    outline: none;
+    border-color: var(--primary-color, #3498db);
+    box-shadow: 0 0 0 3px rgba(52, 152, 219, 0.15);
+}
+
+.signer-field input:disabled {
+    background: #f0f0f0;
+    color: #777;
+}
+
+.signature-label {
+    display: block;
+    font-size: 0.85em;
+    font-weight: 600;
+    color: #444;
+    margin-bottom: 6px;
+}
+
+.signature-pad-wrap {
+    background: #fff;
+    border: 1px solid #ccc;
+    border-radius: 6px;
+    overflow: hidden;
+    margin-bottom: 10px;
+}
+
+.signature-pad {
+    display: block;
+    width: 100%;
+    height: 180px;
+    touch-action: none;
+    cursor: crosshair;
+}
+
+@media (max-width: 600px) {
+    .signer-fields {
+        grid-template-columns: 1fr;
+    }
+}

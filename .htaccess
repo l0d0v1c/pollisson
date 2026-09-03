@@ -12,10 +12,12 @@ RewriteEngine On
 </Files>
 
 # Redirection des codes de sondage vers l'index avec le paramètre code
+# Accepte tout code (espaces, accents, etc.) ; le flag B échappe correctement
+# le backreference lors de son insertion dans le paramètre de requête.
 RewriteCond %{REQUEST_FILENAME} !-f
 RewriteCond %{REQUEST_FILENAME} !-d
 RewriteCond %{REQUEST_URI} !^/?(index\.php|style\.css|.*\.(js|css|png|jpg|jpeg|gif|ico))$ [NC]
-RewriteRule ^([a-zA-Z0-9_-]+)/?$ index.php?code=$1 [QSA,L]
+RewriteRule ^(.+?)/?$ index.php?code=$1 [QSA,B,L]
 
 # Protection des fichiers sensibles
 <FilesMatch "\.(log|sql|bak|backup|old)$">
